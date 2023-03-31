@@ -1,0 +1,412 @@
+# Hausarbeit: Feministische Verkehrspolitik. Eine Salienzmessung anhand der Plenarprotokolle des Bundestags
+
+@Author: Moritz Stockmar (Technische Universität Darmstadt)
+
+## 1. Voraussetzungen
+
+Zur Verwendung des vorliegenden RMarkdown Script werden folgende Bibliotheken und die jeweiligen Dependencies gebraucht:
+
+-   library(polmineR)
+
+-   library(tidyverse)
+
+-   library(cwbtools)
+
+## 2. Einrichtung
+
+Die quantitative Textanalyse wird mithilfe des Tools GERMAPARL, basierend auf polmineR durchgeführt. Hierfür muss erstmal der entsprechende Corpus runtergeladen werden. Die frei verfügbare Version ist hier zu finden: <https://zenodo.org/record/3742113>
+
+Die Installation des Corpus wird dann folgendermaßen durchgeführt:
+
+```{r}
+library(cwbtools)
+cwbtools::corpus_install(doi = "10.5281/zenodo.3742113")
+```
+
+Hierbei handelt es sich um die frei verfügbare Version des Corpus, der die Plenarprotokoll der 13. bis 18. Legislaturperiode des Deutschen Bundestag umfasst. Umfangreichere Corpora sind auf Anfrage bei den Ersteller\*innen zu erhalten. Der dann nötige, etwas komplexere Installationsablauf ist dann auf der freigeschalteten Website zu finden.
+
+## 3. Vorarbeiten und Deklaration der wichtigsten Variablen
+
+Hierin werden die wichtigsten Vorarbeiten durchgeführt. Die Erstellung der partition_bundles kann, je nach den Fähigkeiten des genutzten Computers, einiges an Zeit kosten. Details bitte der Code-Kommentierung entnehmen. Der Code basiert in den Grundzügen auf der den Code-Beispielen von Blaette.
+
+```{r}
+library(polmineR)
+library(tidyverse)
+
+use("polmineR")
+gparl <- corpus("GERMAPARL_19492020") #abhängig von Name des verwendeten Corpus
+
+# Erstellen eines partition_bundles für jeden Sitzungstag
+pb <- partition_bundle(gparl, s_attribute = "date") # 4219 Sitzungen
+# Erstellen von partition_bundles für jeden Tagesordnungspunkt
+nested <- lapply(
+  pb@objects,
+  function(x) partition_bundle(x, s_attribute = "agenda_item", verbose = TRUE)
+)
+
+debates <- polmineR::flatten(nested) # 22499 TOPs
+
+names(debates) <- paste(
+  blapply(debates, function(x) s_attributes(x, "date")),
+  blapply(debates, function(x) name(x)), 
+  sep = "_"
+)
+```
+
+## 4. Die Wörterbücher
+
+Da es sich um einen wörterbuchbasierten Ansatz handelt, müssen zuerst Wörterbücher definiert werden. Je größer das Wörterbuch, desto größer die Sensitivität. Eine große Sensitivität wird in der vorliegenden Analyse als nicht besonders problematisch angesehen, weil es sich nur um Zwischenergebnisse handelt und im nächsten Analyseschritt eine Fundstellenanzahl herauskommt, die klein genug ist, um die manuelle Analyse durchzuführen.
+
+Die \\\\w+ setzen sich aus dem Escape-Character \\ und dem RegEx-Befehl \\w+, der das Folgen von weiteren alphanumerischen Zeichen ermöglicht.
+
+```{r}
+### minimales Wörterbuch für Verkehrspolitik 
+traffic_dic_min <- c('"Tempo\\w+"',
+                     '"Straße\\w+"',
+                     '"Verkehr\\w+"',
+                     '"Auto(|s)"',
+                     '"Autobahn\\w+"',
+                     '"Autofahr\\w+"',
+                     '"Automobil\\w+"',
+                     '"Autoverkehr\\w+"',
+                     '"Motor(|s|en)"',
+                     '"Fahrt\\w+"',
+                     '"Nahverkehr\\w+"',
+                     '"Stadtverkehr\\w+"',
+                     '"Kraftwagen\\w+"',
+                     '"KFZ"'
+                     )
+### großes Wörterbuch für Verkehrspolitik
+traffic_dic_big <- c(traffic_dic_min,
+                     '"Deutsche Bahn"',
+                     '"Mobilitätskonzept"',
+                     '"räumliche Mobilität"',
+                     '"Nachhaltige Mobilität"',
+                     '"Fahrzeugemissio\\w+"',
+                     '"Fußgänger\\w+"',
+                     '"Radverkehr\\w+"',
+                     '"alternative Antriebe"',
+                     '"Verkehrsökologie"',
+                     '"Eisenbahn\\w+"',
+                     '"Flug\\w+"',
+                     '"ÖPNV"',
+                     '"Züge"',
+                     '"Bahnverkehr"',
+                     '"Fernverkehr\\w+"')
+
+### minimales Wörterbuch für Feminismus
+feminism_dic_min <-c('"Frauen\\w+"',
+                     '"weiblich\\w+"', 
+                     '"geschlechtergerecht\\w+"')
+
+### großes Wörterbuch für Feminismus
+feminism_dic_big <-c(feminism_dic_min,
+                    '"Mobilitätsgerechtigkeit\\w+"',
+                    '"Reprodukt\\w+"',
+                    '"Feminismus"',
+                    '"Emanzipation"',
+                    '"Intersektional\\w+"',
+                    '"Care\\w+"',
+                    '"Gender\\w+"',
+                    '"Wegekette\\w+"',
+                    '"patriarch\\w+"')
+
+### Regex-Wörterbuch für Feminismus. Nötig für die KWIC Analyse
+fem_regex = c('Frauen.*', 
+              'weiblich.*',
+              'geschlechtergerecht.*',
+              'Mobilitätsgerecht.*',
+              'Reprodukt.*',
+              'Feminismus.*',
+              'Emanzipation.*', 
+              'Intersektional.*',
+              'Care.*',
+              'Wegekette.*',
+              'patriarch.*',
+              'Gender.*')
+
+### Hilfsfunktion um Wörterbücher beim markieren von Fundstellen mit der highlight() Methode nutzen zu können
+make_searchable <- function(dict){
+  searchable <- c()
+  for(term in dict){
+    temp <- str_replace(str_replace_all(term, "\\\"", ""), "\\\\w\\+", "")
+    searchable <- append(searchable, temp)
+  }
+  return(searchable)
+}
+searchable_traffic <- make_searchable(traffic_dic_big)
+searchable_fem <- make_searchable(feminism_dic_big)
+```
+
+Hier wird das Wörterbuch für Mobilität getestet, indem alle Begriffe, auf die ein regülarer Ausdruck zutrifft und ihre Häufigkeit ausgegeben werden.
+
+```{r}
+# Es wird in den Lemmata gesucht, damit die Wörterbücher weniger umfangreich sein müssen
+test_counts <- polmineR::count(gparl, query = traffic_dic_min,
+                   cqp = TRUE, breakdown = TRUE, p_attribute = "lemma")
+```
+
+## 5. Diktionärsbasierte Labelling
+
+### 5.1 Verkehrspolitik
+
+In der folgenden Zelle wird das Wörterbuch zur Erkennung von Verkehrspolitik über den ganzen GermaParl Korpus laufen gelassen, um potenzielle Verkehrspolitische Debatten erkennen zu können. Es werden die Lemmata genutzt, weil man sich dann keine Gedanken über Wortflexionen machen muss, was die Worterkennung genauer gemacht. Bei der reinen Suche danach, ob etwas vorhanden ist, also kein Sinn extrahiert werden soll, wird dieses Vorgehen im Allgemeinen als ausreichend angesehen.
+
+Des Weiteren wird der Schwellenwert, ab dem ein Rede als verkehrspolitisch gilt, definiert. Hierbei handelt es sich um eine Metavariable (siehe Hausarbeit).
+
+```{r}
+### Definition der Methode, weil sie mehrmals genutzt wird
+#args: Corpus: Korpus der durchsucht werden soll
+#      Dict: genutztes Wörterbuch
+#      threshold: Gesamtzahl der Fundstellen
+#      wantednumberofhits: Anzahl distinkter Wörter, die gefunden werden sollen
+#return: partition_bundle aller Debatten
+
+apply_dictionary <- function(corpus, dict, threshold, wantednumberofhits){
+  
+  # Suche nach Ausschlägen für ein  Dictionary
+  table <- polmineR::count(corpus, 
+                          query = dict, 
+                          p_attribute = "lemma", 
+                          cqp = TRUE)
+  
+  table$numberofhits = rowSums(table >= 1) - 2 # -2, weil Partition und Total mitgezählt wird
+  # = TRUE wenn beide Bedingungungen erfüllt sind
+  table$threshold_met = table$TOTAL >= threshold & table$numberofhits >= wantednumberofhits
+  
+  # Wiederzusammenführen jener TOPs bei denen die Bedingungen erreicht werden konnten zu einem partition_bundle
+  debates_table <- corpus[[ subset(table, threshold_met)[["partition"]] ]]
+  
+  # Zusammenführen zu plpr_partition
+  merged_table <- debates_table %>%
+    merge()
+  
+  return(merged_table) 
+}
+```
+
+Der folgende Block, in dem die Suche nach verkehrspolitischen Debatten durchgeführt wird, kann wieder ein wenig Zeit in Anspruch nehmen.
+
+```{r}
+threshhold_verkehr <- 20
+wanted_number_of_hits_t <- 5
+
+# Subkorpus, mit verkehrspolitischen Debatten
+merged_verpol <- apply_dictionary(debates, traffic_dic_big, threshhold_verkehr, wanted_number_of_hits_t ) %>% 
+  partition_bundle(., s_attribute = "date")
+
+# Hinzufügen der jeweiligen Speaker und des Datums
+nested_verpol <- lapply(
+  merged_verpol@objects,
+  function(x) partition_bundle(x, s_attribute = "speaker", verbose = TRUE)
+)
+verpol_speeches <- polmineR::flatten(nested_verpol) # 22499 TOPs
+names(verpol_speeches) <- paste(
+  blapply(verpol_speeches, function(x) s_attributes(x, "date")),
+  blapply(verpol_speeches, function(x) name(x)), 
+  sep = "_"
+)
+```
+
+### 5.2 Suche nach Feminismus (nicht genutzt!)
+
+In diesem Block sollen jene Reden, in denen eine feministische Argumentation zu finden war, nach dem gleichen Prinzip wie oben rausgefiltert werden. Diese war nicht von Erfolg gekrönt. Es kommen einige der, mit der KWIC-Methode gefundenen, Reden raus, aber nicht alle und darüber hinaus auch viele, die nichts mit dem Versuch zu tun haben. Sowohl Sensitivität, als auch Spezifizität sind also schlecht. Deswegen wurde der Ansatz nicht weiter verfolgt.
+
+```{r}
+count_verpol_speeches_traffic <- polmineR::count(verpol_speeches, 
+                          query = traffic_dic_min, 
+                          p_attribute = "lemma", 
+                          cqp = TRUE)
+
+count_verpol_speeches_traffic$numberofhits = rowSums(count_verpol_speeches_traffic >= 1) - 2
+count_verpol_speeches_traffic$treshold_met = 
+  (count_verpol_speeches_traffic$TOTAL >= 2 & 
+  count_verpol_speeches_traffic$numberofhits >= 2)
+
+
+
+count_verpol_speeches_fem <- polmineR::count(verpol_speeches, 
+                          query = feminism_dic_big, 
+                          p_attribute = "lemma", 
+                          cqp = TRUE)
+count_verpol_speeches_fem$numberofhits = rowSums(count_verpol_speeches_fem >= 1) - 2
+count_verpol_speeches_fem$treshold_met = count_verpol_speeches_fem$TOTAL >= 2 & count_verpol_speeches_fem$numberofhits >= 1
+
+
+combined_score <- left_join(count_verpol_speeches_traffic, count_verpol_speeches_fem, by = "partition")
+
+combined_score$treshold_met = combined_score$treshold_met.y & combined_score$treshold_met.x
+
+# Erstellen der feministisch verkehrspolitischen partition
+fem_traf_part <- verpol_speeches[[ subset(combined_score, treshold_met)[["partition"]] ]]
+
+```
+
+### 5.3 Suche nach feministischen Argumentationen (KWIC)
+
+Mithilfe der KWIC-Methode wird im verkehrspolitischen Subkorpus auf gemeinsame Fundstellen von verkehrspolitischen und feministischen Argumenten gesucht. Der verkehrspolitische Subkorpus wird weitergenutzt, damit sichergegangen wird, dass die Fundstellen alle in Reden sind, die wahrscheinlich zum Komplex der Verkehrspolitik gehören (weil sie als ganzes die Schwellenwerte überschreiten). Somit konnten viele vermeintlichen Treffer rausgefiltert werden.
+
+Hiermit wird eine Vorauswahl getroffen. Die vielversprechend erscheinenden Treffer werden im nächsten Feld genauer betrachtet.
+
+```{r}
+show(kwic(merged_verpol, query = traffic_dic_min, positivelist = fem_regex, left = 50, right = 50 , cqp = TRUE, regex = TRUE, s_attribute = c("lp", "speaker","session", "agenda_item"))) 
+```
+
+Zur genauen Betrachtung der jeweiligen Reden kann folgender Code genutzt werden. Im Zweifel kann man zur besseren Lesbarkeit aber auch auf die Online verfügbaren Plenarprotokolle des Bundestages zurückgreifen.
+
+Empfehlungen, weil sehr passende Rede:
+
+Jutta Braband, 26.11.1991
+
+Außerdem ist die gesamte Debatte am 16.01.1997 zu empfehlen.
+
+```{r}
+datum = "1997-01-16"
+rednerIn = "Monika Ganseforth"
+
+gparl %>%
+  partition(date = datum ) %>%
+  partition(speaker = rednerIn) %>%
+  read() %>% 
+  highlight(list(red = searchable_traffic, blue =  searchable_fem), regex = TRUE)
+```
+
+```{r}
+
+```
+
+## 6. Die Abbildungen aus der Hausarbeit
+
+### Abbildung 1 Visualisierung der neoliberalen Wende in Bundestagsdebatten
+
+```{r}
+neolib_query <- c('"Liberalisierung\\w+"', '"Deregulierung\\w+"',  '"Privatisierung\\w+"')
+
+freqs_neolib_all <- polmineR::dispersion(gparl, query = neolib_query, s_attribute = "year", cqb = TRUE, freq = TRUE, p_attribute = "lemma")
+
+freqs_neolib_all %>%
+  ggplot(aes(x = year, y = freq * 100000, group = query)) +
+    geom_line() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    labs(
+      x = "Jahr",
+      y = "Treffer pro 100.000 Worte",
+      color = "Wort",
+    )
+
+```
+
+### Abbildung 2 Häufigkeit der Wörter im Verkehrspolitik Dict
+
+```{r}
+verpol_dispersion_min <- polmineR::dispersion(gparl, query = traffic_dic_min, p_attribute = "lemma", s_attribute = "lp", freq = TRUE) %>%
+  transform(lp = as.numeric(lp)) %>%
+  arrange(lp)
+
+verpol_dispersion_big <- polmineR::dispersion(gparl, query = traffic_dic_big, p_attribute = "lemma", s_attribute = "lp", freq = TRUE) %>%
+  transform(lp = as.numeric(lp)) %>%
+  arrange(lp)
+
+verpol_dispersion <- left_join(verpol_dispersion_min, verpol_dispersion_big, by = "lp") %>%
+  pivot_longer(cols = starts_with("freq")) %>%
+  ggplot(aes(x = lp, y = value * 100000, fill = name)) +
+    geom_bar(stat = "identity") +
+    labs(
+      x = "Legislaturperiode",
+      y = "Treffer pro 100.000 Wörter",
+    )
+```
+
+![](images/plot_zoom_png.png)
+
+### Abbildung 3 Verkehrspolitische Debatten im Zeitverlauf
+
+```{r}
+anzahl_debatten <- function(corpus, dic, treshold_total, treshhold_hits){
+    merged_abb <- apply_dictionary(corpus, dic, treshold_total, treshhold_hits ) %>%
+      partition_bundle(., s_attribute = "year") 
+  
+    
+  nested_merged <- lapply(
+    merged_abb@objects,
+    function(x) partition_bundle(x, s_attribute = "date", verbose = TRUE)
+  )
+  
+  table <- data.frame (year = 1950:2020,
+                      numberofdebates = 0)
+  
+  for(i in 1:length(nested_merged)){
+    year = as.numeric(nested_merged[[i]]@name)
+    table[[1]][i] = year
+    table[[2]][i] = length(nested_merged[[i]]@objects)   
+  }
+  
+  table <- filter(table, numberofdebates != 0)
+  
+  return(table)
+}
+
+anzahl_verpol_min <- anzahl_debatten(debates, traffic_dic_min, threshhold_verkehr, wanted_number_of_hits_t)
+
+anzahl_min = sum(anzahl_verpol_min$numberofdebates)
+
+anzahl_verpol_big <- anzahl_debatten(debates, traffic_dic_big, threshhold_verkehr, wanted_number_of_hits_t)
+
+anzahl_big = sum(anzahl_verpol_big$numberofdebates)
+
+abb_verpol <- left_join(anzahl_verpol_min, anzahl_verpol_big, by = "year")
+```
+
+```{r}
+abb_text <- paste(paste(paste("Schwellenwerte: \n Gesamtzahl ", threshhold_verkehr), "\n Worttreffern "),  wanted_number_of_hits_t)
+
+abb_verpol %>%
+  pivot_longer(cols = starts_with("number")) %>%
+  ggplot(aes(x = year, y = value, group = name, color = name)) +
+    geom_line () +
+  labs(
+      title = "Anzahl gefundener Debatten pro Jahr",
+      x = "Jahr",
+      y = "Anzahl Debatten",
+      color = "Min-/Big-",
+    ) +
+  scale_color_manual(labels = c('Min-Wörterbuch', 'Big-Wörterbuch'), values = c("red", "blue")) + 
+    annotate("text", x=1957, y=25, label= abb_text)
+```
+
+### Abbildung 4
+
+```{r}
+
+```
+
+## Weitere Ergebnisse
+
+In diesem Abschnitt werden ein paar Weitere Ergebnisse, deren Visualisierung es nicht in die Arbeit geschafft haben, präsentiert. Dabei handelt es sich vor allem um Metavariablen- und Wörterbuchkonfigurationen, die nicht mehr unterbringbar waren.
+
+### Beispielvisualisierung von veränderten Nutzungsmustern von Wörtern
+
+```{r}
+kfz_query <- c('"Kraftfahrzeug\\w+"', '"KFZ"')
+auto_query <- c('"Auto"')
+
+freqs_kfz <- polmineR::dispersion(gparl, query = kfz_query, s_attribute = "year", cqb = TRUE, freq = TRUE)
+
+freqs_auto <- polmineR::dispersion(gparl, query = auto_query, s_attribute = "year", cqb = TRUE, freq = TRUE)
+
+kfz_vs_auto <- left_join(freqs_kfz, freqs_auto, by = "year")
+
+kfz_vs_auto %>%
+  count(year, count.x, count.y) %>%
+  pivot_longer(cols = starts_with("count")) %>%
+  ggplot(aes(x = year, y = value, group = name, color = name)) +
+    geom_line() + 
+    labs(
+      title = "Verlauf der Begriffsnutzung von Auto und KFZ",
+      x = "Jahr",
+      y = "Anzahl Nennungen",
+      color = "Wort",
+    ) +
+  scale_color_manual(labels = c('KFZ', 'Auto'), values = c("red", "blue"))
+    
+```
