@@ -138,7 +138,7 @@ searchable_traffic <- make_searchable(traffic_dic_big)
 searchable_fem <- make_searchable(feminism_dic_big)
 ```
 
-Hier wird das Wörterbuch für Mobilität getestet, indem alle Begriffe, auf die ein regülarer Ausdruck zutrifft und ihre Häufigkeit ausgegeben werden.
+Hier wird das Wörterbuch für Mobilität getestet, indem alle Begriffe, auf die ein regulärer Ausdruck zutrifft und ihre Häufigkeit ausgegeben werden.
 
 ```{r}
 # Es wird in den Lemmata gesucht, damit die Wörterbücher weniger umfangreich sein müssen
@@ -271,10 +271,6 @@ gparl %>%
   highlight(list(red = searchable_traffic, blue =  searchable_fem), regex = TRUE)
 ```
 
-```{r}
-
-```
-
 ## 6. Die Abbildungen aus der Hausarbeit
 
 ### Abbildung 1 Visualisierung der neoliberalen Wende in Bundestagsdebatten
@@ -372,41 +368,4 @@ abb_verpol %>%
     ) +
   scale_color_manual(labels = c('Min-Wörterbuch', 'Big-Wörterbuch'), values = c("red", "blue")) + 
     annotate("text", x=1957, y=25, label= abb_text)
-```
-
-### Abbildung 4
-
-```{r}
-
-```
-
-## Weitere Ergebnisse
-
-In diesem Abschnitt werden ein paar Weitere Ergebnisse, deren Visualisierung es nicht in die Arbeit geschafft haben, präsentiert. Dabei handelt es sich vor allem um Metavariablen- und Wörterbuchkonfigurationen, die nicht mehr unterbringbar waren.
-
-### Beispielvisualisierung von veränderten Nutzungsmustern von Wörtern
-
-```{r}
-kfz_query <- c('"Kraftfahrzeug\\w+"', '"KFZ"')
-auto_query <- c('"Auto"')
-
-freqs_kfz <- polmineR::dispersion(gparl, query = kfz_query, s_attribute = "year", cqb = TRUE, freq = TRUE)
-
-freqs_auto <- polmineR::dispersion(gparl, query = auto_query, s_attribute = "year", cqb = TRUE, freq = TRUE)
-
-kfz_vs_auto <- left_join(freqs_kfz, freqs_auto, by = "year")
-
-kfz_vs_auto %>%
-  count(year, count.x, count.y) %>%
-  pivot_longer(cols = starts_with("count")) %>%
-  ggplot(aes(x = year, y = value, group = name, color = name)) +
-    geom_line() + 
-    labs(
-      title = "Verlauf der Begriffsnutzung von Auto und KFZ",
-      x = "Jahr",
-      y = "Anzahl Nennungen",
-      color = "Wort",
-    ) +
-  scale_color_manual(labels = c('KFZ', 'Auto'), values = c("red", "blue"))
-    
 ```
